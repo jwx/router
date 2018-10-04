@@ -6,69 +6,19 @@ import {
   Container
 } from 'aurelia-dependency-injection';
 import {
-  History
+  History,
+  NavigationOptions
 } from 'aurelia-history';
+import {
+  buildQueryString,
+  parseQueryString
+} from 'aurelia-path';
+import {
+  TemplatingEngine
+} from 'aurelia-templating';
 import {
   EventAggregator
 } from 'aurelia-event-aggregator';
-
-/**
-* A callback to indicate when pipeline processing should advance to the next step
-* or be aborted.
-*/
-export declare interface Next {
-  
-  /**
-    * Indicates the successful completion of the entire pipeline.
-    */
-  complete(result?: any): Promise<any>;
-  
-  /**
-    * Indicates that the pipeline should cancel processing.
-    */
-  cancel(result?: any): Promise<any>;
-  
-  /**
-    * Indicates that pipeline processing has failed and should be stopped.
-    */
-  reject(result?: any): Promise<any>;
-  
-  /**
-    * Indicates the successful completion of the pipeline step.
-    */
-  (): Promise<any>;
-}
-
-/**
-* A step to be run during processing of the pipeline.
-*/
-/**
-* A step to be run during processing of the pipeline.
-*/
-export declare interface PipelineStep {
-  
-  /**
-     * Execute the pipeline step. The step should invoke next(), next.complete(),
-     * next.cancel(), or next.reject() to allow the pipeline to continue.
-     *
-     * @param instruction The navigation instruction.
-     * @param next The next step in the pipeline.
-     */
-  run(instruction: NavigationInstruction, next: Next): Promise<any>;
-}
-
-/**
-* The result of a pipeline run.
-*/
-/**
-* The result of a pipeline run.
-*/
-export declare interface PipelineResult {
-  status: string;
-  instruction: NavigationInstruction;
-  output: any;
-  completed: boolean;
-}
 export declare interface NavigationInstructionInit {
   fragment: string;
   queryString: string;
@@ -303,6 +253,37 @@ export declare interface ActivationStrategy {
 }
 
 /**
+* A step to be run during processing of the pipeline.
+*/
+/**
+* A step to be run during processing of the pipeline.
+*/
+export declare interface PipelineStep {
+  
+  /**
+     * Execute the pipeline step. The step should invoke next(), next.complete(),
+     * next.cancel(), or next.reject() to allow the pipeline to continue.
+     *
+     * @param instruction The navigation instruction.
+     * @param next The next step in the pipeline.
+     */
+  run(instruction: NavigationInstruction, next: Next): Promise<any>;
+}
+
+/**
+* The result of a pipeline run.
+*/
+/**
+* The result of a pipeline run.
+*/
+export declare interface PipelineResult {
+  status: string;
+  instruction: NavigationInstruction;
+  output: any;
+  completed: boolean;
+}
+
+/**
 * When a navigation command is encountered, the current navigation
 * will be cancelled and control will be passed to the navigation
 * command so it can determine the correct action.
@@ -314,6 +295,33 @@ export declare interface ActivationStrategy {
 */
 export declare interface NavigationCommand {
   navigate(router: Router): void;
+}
+
+/**
+* A callback to indicate when pipeline processing should advance to the next step
+* or be aborted.
+*/
+export declare interface Next {
+  
+  /**
+    * Indicates the successful completion of the entire pipeline.
+    */
+  complete(result?: any): Promise<any>;
+  
+  /**
+    * Indicates that the pipeline should cancel processing.
+    */
+  cancel(result?: any): Promise<any>;
+  
+  /**
+    * Indicates that pipeline processing has failed and should be stopped.
+    */
+  reject(result?: any): Promise<any>;
+  
+  /**
+    * Indicates the successful completion of the pipeline step.
+    */
+  (): Promise<any>;
 }
 
 /**
@@ -331,39 +339,6 @@ export declare interface IObservable {
  */
 export declare interface ISubscription {
   unsubscribe(): void;
-}
-
-/**
-* The status of a Pipeline.
-*/
-export declare const pipelineStatus: any;
-
-/**
-* The class responsible for managing and processing the navigation pipeline.
-*/
-/**
-* The class responsible for managing and processing the navigation pipeline.
-*/
-export declare class Pipeline {
-  
-  /**
-    * The pipeline steps.
-    */
-  steps: Array<Function | PipelineStep>;
-  
-  /**
-    * Adds a step to the pipeline.
-    *
-    * @param step The pipeline step.
-    */
-  addStep(step: PipelineStep): Pipeline;
-  
-  /**
-    * Runs the pipeline.
-    *
-    * @param instruction The navigation instruction to process.
-    */
-  run(instruction: NavigationInstruction): Promise<PipelineResult>;
 }
 export declare class CommitChangesStep {
   run(navigationInstruction: NavigationInstruction, next: Function): any;
@@ -436,7 +411,7 @@ export declare class NavigationInstruction {
   /**
     * Adds a viewPort instruction.
     */
-  addViewPortInstruction(viewPortName: string, strategy: string, moduleId: string, component: any): any;
+  addViewPortInstruction(viewPortName: string, strategy: string, moduleId: string, component: any, active: boolean): any;
   
   /**
     * Gets the name of the route pattern's wildcard parameter, if applicable.
@@ -574,17 +549,51 @@ export declare class RedirectToRoute {
 }
 
 /**
+* The status of a Pipeline.
+*/
+export declare const pipelineStatus: any;
+
+/**
+* The class responsible for managing and processing the navigation pipeline.
+*/
+/**
+* The class responsible for managing and processing the navigation pipeline.
+*/
+export declare class Pipeline {
+  
+  /**
+    * The pipeline steps.
+    */
+  steps: Array<Function | PipelineStep>;
+  
+  /**
+    * Adds a step to the pipeline.
+    *
+    * @param step The pipeline step.
+    */
+  addStep(step: PipelineStep): Pipeline;
+  
+  /**
+    * Runs the pipeline.
+    *
+    * @param instruction The navigation instruction to process.
+    */
+  run(instruction: NavigationInstruction): Promise<PipelineResult>;
+}
+
+/**
  * Class used to configure a [[Router]] instance.
  *
  * @constructor
  */
 export declare class RouterConfiguration {
-  instructions: any;
-  options: any;
-  pipelineSteps: Array<Function | PipelineStep>;
+  instructions: Array<((router: Router) => void)>;
+  options: { compareQueryParams: boolean, root: string, pushState: boolean, hashChange: boolean, silent: boolean, [key: string]: any };
+  pipelineSteps: Array<{ name: string, step: Function | PipelineStep }>;
   title: string;
-  unknownRouteConfig: any;
-  viewPortDefaults: any;
+  titleSeparator: string;
+  unknownRouteConfig: string | RouteConfig | ((instruction: NavigationInstruction) => string | RouteConfig | Promise<string | RouteConfig>);
+  viewPortDefaults: { [name: string]: { moduleId: string | void, [key: string]: any } };
   
   /**
     * Adds a step to be run during the [[Router]]'s navigation pipeline.
@@ -650,7 +659,7 @@ export declare class RouterConfiguration {
      *  default, of the form { viewPortName: { moduleId } }.
      * @chainable
      */
-  useViewPortDefaults(viewPortConfig: any): any;
+  useViewPortDefaults(viewPortConfig: { [name: string]: { moduleId: string, [key: string]: any } }): RouterConfiguration;
   
   /**
     * Maps a single route to be registered with the router.
@@ -703,6 +712,16 @@ export declare class Router {
   baseUrl: string;
   
   /**
+     * If defined, used in generation of document title for [[Router]]'s routes.
+     */
+  title: string | undefined;
+  
+  /**
+     * The separator used in the document title between [[Router]]'s routes.
+     */
+  titleSeparator: string | undefined;
+  
+  /**
     * True if the [[Router]] has been configured.
     */
   isConfigured: boolean;
@@ -746,6 +765,11 @@ export declare class Router {
     * True if the [[Router]] is navigating due to a browser refresh.
     */
   isNavigatingRefresh: boolean;
+  
+  /**
+    * True if the previous instruction successfully completed the CanDeactivatePreviousStep in the current navigation.
+    */
+  couldDeactivate: boolean;
   
   /**
     * The currently active navigation tracker.
@@ -821,9 +845,11 @@ export declare class Router {
     * Navigates to a new location.
     *
     * @param fragment The URL fragment to use as the navigation destination.
-    * @param options The navigation options. See [[History.NavigationOptions]] for all available options.
+    * @param options The navigation options.
+    * @param params The parameters to be used when populating the url pattern.
+    * @param state A state passed in the navigationInstruction.
     */
-  navigate(fragment: string, options?: any): boolean;
+  navigate(fragment: string, options?: NavigationOptions, params?: any, state?: any): Promise<PipelineResult | boolean>;
   
   /**
     * Navigates to a new location corresponding to the route and params specified. Equivallent to [[Router.generate]] followed
@@ -831,9 +857,10 @@ export declare class Router {
     *
     * @param route The name of the route to use when generating the navigation location.
     * @param params The route parameters to be used when populating the route pattern.
-    * @param options The navigation options. See [[History.NavigationOptions]] for all available options.
+    * @param options The navigation options.
+    * @param state A state passed in the navigationInstruction.
     */
-  navigateToRoute(route: string, params?: any, options?: any): boolean;
+  navigateToRoute(route: string, params?: any, options?: NavigationOptions, state?: any): Promise<PipelineResult | boolean>;
   
   /**
     * Navigates back to the most recent location in history.
@@ -847,6 +874,15 @@ export declare class Router {
      * @returns {Router} The new child Router.
      */
   createChild(container?: Container): Router;
+  
+  /**
+    * Generates a URL fragment with parameters applied to it.
+    *
+    * @param fragment The route fragment whose pattern should have parameters applied to it.
+    * @param params The route params to be used to populate the route pattern.
+    * @returns {string} A string containing the generated URL fragment.
+    */
+  applyParams(fragment: string, params: any): string;
   
   /**
     * Generates a URL fragment matching the specified route pattern.
@@ -943,7 +979,7 @@ export declare class PipelineProvider {
   /**
     * Create the navigation pipeline.
     */
-  createPipeline(): Pipeline;
+  createPipeline(useCanDeactivateStep?: boolean): Pipeline;
   
   /**
     * Adds a step into the pipeline at a known slot location.
@@ -978,8 +1014,9 @@ export declare class AppRouter extends Router {
     * Loads the specified URL.
     *
     * @param url The URL fragment to load.
+    * @param state A state to pass along in the navigation instruction.
     */
-  loadUrl(url?: any): Promise<NavigationInstruction>;
+  loadUrl(url: any, state?: any): Promise<NavigationInstruction>;
   
   /**
     * Registers a viewPort to be used as a rendering target for activated routes.

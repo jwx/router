@@ -2,21 +2,23 @@ import * as LogManager from 'aurelia-logging';
 import {RouteRecognizer} from 'aurelia-route-recognizer';
 import {Container} from 'aurelia-dependency-injection';
 import {History,NavigationOptions} from 'aurelia-history';
+import {buildQueryString,parseQueryString} from 'aurelia-path';
+import {TemplatingEngine} from 'aurelia-templating';
 import {EventAggregator} from 'aurelia-event-aggregator';
 
-export function _normalizeAbsolutePath(path, hasPushState, absolute = false) {
-  if (!hasPushState && path[0] !== '#') {
+export function _normalizeAbsolutePath(path, usePushState, absolute = false) {
+  if (!usePushState && path[0] !== '#') {
     path = '#' + path;
   }
 
-  if (hasPushState && absolute) {
+  if (usePushState && absolute) {
     path = path.substring(1, path.length);
   }
 
   return path;
 }
 
-export function _createRootedPath(fragment, baseUrl, hasPushState, absolute) {
+export function _createRootedPath(fragment, baseUrl, usePushState, absolute) {
   if (isAbsoluteUrl.test(fragment)) {
     return fragment;
   }
@@ -37,15 +39,15 @@ export function _createRootedPath(fragment, baseUrl, hasPushState, absolute) {
     path = path.substring(0, path.length - 1);
   }
 
-  return _normalizeAbsolutePath(path + fragment, hasPushState, absolute);
+  return _normalizeAbsolutePath(path + fragment, usePushState, absolute);
 }
 
-export function _resolveUrl(fragment, baseUrl, hasPushState) {
+export function _resolveUrl(fragment, baseUrl, usePushState) {
   if (isRootedPath.test(fragment)) {
-    return _normalizeAbsolutePath(fragment, hasPushState);
+    return _normalizeAbsolutePath(fragment, usePushState);
   }
 
-  return _createRootedPath(fragment, baseUrl, hasPushState);
+  return _createRootedPath(fragment, baseUrl, usePushState);
 }
 
 export function _ensureArrayWithSingleRoutePerConfig(config) {
@@ -190,7 +192,7 @@ export class NavigationInstruction {
   /**
   * Adds a viewPort instruction.
   */
-  addViewPortInstruction(viewPortName: string, strategy: string, moduleId: string, component: any): any {
+  addViewPortInstruction(viewPortName: string, strategy: string, moduleId: string, component: any, active: boolean): any {
     const config = Object.assign({}, this.lifecycleArgs[1], { currentViewPort: viewPortName });
     let viewportInstruction = this.viewPortInstructions[viewPortName] = {
       name: viewPortName,
@@ -198,7 +200,8 @@ export class NavigationInstruction {
       moduleId: moduleId,
       component: component,
       childRouter: component.childRouter,
-      lifecycleArgs: [].concat(this.lifecycleArgs[0], config, this.lifecycleArgs[2])
+      lifecycleArgs: [].concat(this.lifecycleArgs[0], config, this.lifecycleArgs[2]),
+      active: active
     };
 
     return viewportInstruction;
@@ -293,6 +296,9 @@ export class NavigationInstruction {
             }
           }));
         }
+      }
+      else if (viewPortInstruction.active && !viewPortInstruction.childNavigationInstruction) {
+        delaySwaps.push({viewPort, viewPortInstruction});
       } else {
         if (viewPortInstruction.childNavigationInstruction) {
           loads.push(viewPortInstruction.childNavigationInstruction._commitChanges(waitToSwap));
@@ -624,11 +630,6 @@ interface PipelineResult {
   output: any;
   completed: boolean;
 }
-
-/**
-* The result of a router navigation.
-*/
-export type NavigationResult = Promise<PipelineResult | boolean>;
 
 /**
 * When a navigation command is encountered, the current navigation
@@ -1136,8 +1137,21 @@ export function _buildNavigationPlan(instruction: NavigationInstruction, forceLi
         pending.push(task);
       }
     }
+  }
 
-    return Promise.all(pending).then(() => plan);
+  if (config.viewPorts) {
+    for (let viewPortName in config.viewPorts) {
+      if (config.viewPorts[viewPortName] === null || config.viewPorts[viewPortName].moduleId === null) {
+        config.viewPorts[viewPortName] = null;
+      }
+      if (config.viewPorts[viewPortName] !== undefined || !viewPorts[viewPortName]) {
+        if (config.stateful || (config.viewPorts[viewPortName] && config.viewPorts[viewPortName].stateful)) {
+          config.viewPorts[viewPortName].stateful = true;
+          viewPortName = instruction.router._ensureStatefulViewPort(viewPortName, config.viewPorts[viewPortName].moduleId);
+        }
+        viewPorts[viewPortName] = config.viewPorts[viewPortName.split('.')[0]];
+      }
+    }
   }
 
   for (let viewPortName in config.viewPorts) {
@@ -1152,7 +1166,92 @@ export function _buildNavigationPlan(instruction: NavigationInstruction, forceLi
     };
   }
 
-  return Promise.resolve(plan);
+  return Promise.all(pending).then(() => {
+    for (let viewPortName in plan) {
+      if (viewPortName.indexOf('.') != -1) {
+        let shortName = viewPortName.split('.')[0];
+        if (!plan[shortName]) {
+          plan[shortName] = {
+            name: shortName,
+            strategy: activationStrategy.replace,
+            config: null
+          }
+        }
+      }
+    }
+    return plan;
+  });
+}
+
+function buildViewPortPlan(instruction: NavigationInstruction, viewPorts: any, forceLifecycleMinimum, newParams: boolean, viewPortName: string, previous: boolean) {
+  let plan = {};
+  let prev = instruction.previousInstruction;
+  let config = instruction.config;
+  let configViewPortName = viewPortName;
+  let prevViewPortInstruction = prev ? prev.viewPortInstructions[viewPortName] : undefined;
+  let nextViewPortConfig = !previous ? viewPorts[configViewPortName] : undefined;
+
+  if (config.explicitViewPorts && nextViewPortConfig === undefined) {
+    nextViewPortConfig = null;
+  }
+
+  plan['name'] = viewPortName;
+  let viewPortPlan = plan['plan'] = {
+    name: viewPortName
+  };
+  if (prevViewPortInstruction) {
+    viewPortPlan.prevComponent = prevViewPortInstruction.component;
+    viewPortPlan.prevModuleId = prevViewPortInstruction.moduleId;
+  }
+  if (nextViewPortConfig !== undefined) {
+    viewPortPlan.config = nextViewPortConfig;
+    viewPortPlan.active = true;
+  }
+  else {
+    viewPortPlan.config = prevViewPortInstruction.config;
+  }
+
+  if (!prevViewPortInstruction) {
+    viewPortPlan.strategy = activationStrategy.replace;
+  } else if (nextViewPortConfig === null) { // null value means deliberately cleared!
+    viewPortPlan.strategy = activationStrategy.replace;
+  } else if (nextViewPortConfig === undefined) { // undefined (left out in config) means keep same
+    viewPortPlan.strategy = activationStrategy.noChange;
+  }
+  else if (prevViewPortInstruction.moduleId !== nextViewPortConfig.moduleId) {
+    viewPortPlan.strategy = activationStrategy.replace;
+  }
+  else if (!nextViewPortConfig.stateful && !prevViewPortInstruction.active) {
+    viewPortPlan.strategy = activationStrategy.replace;
+  } else if ('determineActivationStrategy' in prevViewPortInstruction.component.viewModel) {
+    viewPortPlan.strategy = prevViewPortInstruction.component.viewModel
+      .determineActivationStrategy(...instruction.lifecycleArgs);
+  } else if (config.activationStrategy) {
+    viewPortPlan.strategy = config.activationStrategy;
+  } else if (newParams || forceLifecycleMinimum) {
+    viewPortPlan.strategy = activationStrategy.invokeLifecycle;
+  } else {
+    viewPortPlan.strategy = activationStrategy.noChange;
+  }
+
+  if (viewPortPlan.strategy !== activationStrategy.replace && prevViewPortInstruction.childRouter) {
+    let path = instruction.getWildcardPath();
+    let task = prevViewPortInstruction.childRouter
+      ._createNavigationInstruction(path, instruction).then(childInstruction => { // eslint-disable-line no-loop-func
+        viewPortPlan.childNavigationInstruction = childInstruction;
+
+        return _buildNavigationPlan(
+          childInstruction,
+          viewPortPlan.strategy === activationStrategy.invokeLifecycle)
+          .then(childPlan => {
+            childInstruction.plan = childPlan;
+          });
+      });
+
+    plan['task'] = task;
+  }
+
+  return plan;
 }
 
 function hasDifferentParameterValues(prev: NavigationInstruction, next: NavigationInstruction): boolean {
@@ -1274,6 +1373,11 @@ export class Router {
   isNavigatingRefresh: boolean;
 
   /**
+  * True if the previous instruction successfully completed the CanDeactivatePreviousStep in the current navigation.
+  */
+  couldDeactivate: boolean;
+
+  /**
   * The currently active navigation tracker.
   */
   currentNavigationTracker: number;
@@ -1339,6 +1443,7 @@ export class Router {
     this.isNavigatingRefresh = false;
     this.isNavigatingForward = false;
     this.isNavigatingBack = false;
+    this.couldDeactivate = false;
     this.navigation = [];
     this.currentInstruction = null;
     this.viewPortDefaults = {};
@@ -1406,14 +1511,21 @@ export class Router {
   *
   * @param fragment The URL fragment to use as the navigation destination.
   * @param options The navigation options.
+  * @param params The parameters to be used when populating the url pattern.
+  * @param state A state passed in the navigationInstruction.
   */
-  navigate(fragment: string, options?: NavigationOptions): NavigationResult {
+  navigate(fragment: string, options?: NavigationOptions, params?: any, state?: any): Promise<PipelineResult | boolean> {
     if (!this.isConfigured && this.parent) {
       return this.parent.navigate(fragment, options);
     }
 
+    if (params) {
+      let safeParams = Object.assign({}, params);
+      fragment = this.applyParams(fragment, safeParams);
+    }
+
     this.isExplicitNavigation = true;
-    return this.history.navigate(_resolveUrl(fragment, this.baseUrl, this.history._hasPushState), options);
+    return this.history.navigate(_resolveUrl(fragment, this.baseUrl, this.history._hasPushState), options, state);
   }
 
   /**
@@ -1423,9 +1535,10 @@ export class Router {
   * @param route The name of the route to use when generating the navigation location.
   * @param params The route parameters to be used when populating the route pattern.
   * @param options The navigation options.
+  * @param state A state passed in the navigationInstruction.
   */
-  navigateToRoute(route: string, params?: any, options?: NavigationOptions): NavigationResult {
-    let path = this.generate(route, params);
+  navigateToRoute(route: string, params?: any, options?: NavigationOptions, state?: any): Promise<PipelineResult | boolean> {
+    let path = this.generate(route, params, {}, state);
     return this.navigate(path, options);
   }
 
@@ -1450,6 +1563,39 @@ export class Router {
   }
 
   /**
+  * Generates a URL fragment with parameters applied to it.
+  *
+  * @param fragment The route fragment whose pattern should have parameters applied to it.
+  * @param params The route params to be used to populate the route pattern.
+  * @returns {string} A string containing the generated URL fragment.
+  */
+  applyParams(fragment: string, params: any): string {
+    let fragments = fragment.split('/');
+    let consumed = {};
+    for (let i = 0, ilen = fragments.length; i < ilen; ++i) {
+      let segment = fragments[i];
+
+      // Try to parse a parameter :param?
+      let match = segment.match(/^:([^?]+)(\?)?$/);
+      if (match) {
+        let [, name, optional] = match;
+        fragments[i] = params[name];
+        consumed[name] = true;
+      }
+    }
+    fragment = fragments.join('/');
+
+    for (let key of Object.keys(consumed)) {
+      delete params[key];
+    }
+    let query = buildQueryString(params);
+    if (query && query.length) {
+      fragment += (fragment.indexOf('?') < 0 ? '?' : '&') + query;
+    }
+    return fragment;
+  }
+
+  /**
   * Generates a URL fragment matching the specified route pattern.
   *
   * @param name The name of the route whose pattern should be used to generate the fragment.
@@ -1468,7 +1614,7 @@ export class Router {
     }
 
     let path = this._recognizer.generate(name, params);
-    let rootedPath = _createRootedPath(path, this.baseUrl, this.history._hasPushState, options.absolute);
+    let rootedPath = _createRootedPath(path, this.baseUrl, this.history._usePushState, options.absolute);
     return options.absolute ? `${this.history.getAbsoluteRoot()}${rootedPath}` : rootedPath;
   }
 
@@ -1620,9 +1766,9 @@ export class Router {
     for (let i = 0, length = nav.length; i < length; i++) {
       let current = nav[i];
       if (!current.config.href) {
-        current.href = _createRootedPath(current.relativeHref, this.baseUrl, this.history._hasPushState);
+        current.href = _createRootedPath(current.relativeHref, this.baseUrl, this.history._usePushState);
       } else {
-        current.href = _normalizeAbsolutePath(current.config.href, this.history._hasPushState);
+        current.href = _normalizeAbsolutePath(current.config.href, this.history._usePushState);
       }
     }
   }
@@ -1647,7 +1793,7 @@ export class Router {
     }
   }
 
-  _createNavigationInstruction(url: string = '', parentInstruction: NavigationInstruction = null): Promise<NavigationInstruction> {
+  _createNavigationInstruction(url: string = '', parentInstruction: NavigationInstruction = null, state?: any): Promise<NavigationInstruction> {
     let fragment = url;
     let queryString = '';
 
@@ -1679,9 +1825,10 @@ export class Router {
     if (results && results.length) {
       let first = results[0];
       let instruction = new NavigationInstruction(Object.assign({}, instructionInit, {
-        params: first.params,
+        params: Object.assign({}, first.params, parseQueryString(queryString)),
         queryParams: first.queryParams || results.queryParams,
-        config: first.config || first.handler
+        config: first.config || first.handler,
+        state: state
       }));
 
       if (typeof first.handler === 'function') {
@@ -1693,9 +1840,10 @@ export class Router {
       }
     } else if (this.catchAllHandler) {
       let instruction = new NavigationInstruction(Object.assign({}, instructionInit, {
-        params: { path: fragment },
+        params: Object.assign({ path: fragment }, parseQueryString(queryString)),
         queryParams: results ? results.queryParams : {},
-        config: null // config will be created by the catchAllHandler
+        config: null, // config will be created by the catchAllHandler
+        state: state
       }));
 
       result = evaluateNavigationStrategy(instruction, this.catchAllHandler);
@@ -1706,12 +1854,13 @@ export class Router {
         let newParentInstruction = this._findParentInstructionFromRouter(router, parentInstruction);
 
         let instruction = new NavigationInstruction(Object.assign({}, instructionInit, {
-          params: { path: fragment },
+          params: Object.assign({ path: fragment }, parseQueryString(queryString)),
           queryParams: results ? results.queryParams : {},
           router: router,
           parentInstruction: newParentInstruction,
           parentCatchHandler: true,
-          config: null // config will be created by the chained parent catchAllHandler
+          config: null, // config will be created by the chained parent catchAllHandler
+          state: state
         }));
 
         result = evaluateNavigationStrategy(instruction, router.catchAllHandler);
@@ -1766,6 +1915,25 @@ export class Router {
 
         return c;
       });
+  }
+
+  _ensureStatefulViewPort(name, moduleId) {
+    let viewPort = this.viewPorts[name];
+    let viewPortName = `${name}.${moduleId}`;
+
+    if (!this.viewPorts[viewPortName]) {
+      let newElement = viewPort.element.ownerDocument.createElement('router-view');
+      newElement.setAttribute('name', viewPortName);
+      viewPort.element.insertAdjacentElement('afterend', newElement);
+      let templatingEngine = viewPort.container.get(TemplatingEngine);
+      templatingEngine.enhance({
+        element: newElement,
+        container: viewPort.container,
+        resources: viewPort.resources
+      });
+    }
+    
+    return viewPortName;
   }
 }
 
@@ -1826,7 +1994,7 @@ export class ActivateNextStep {
   }
 }
 
-function processDeactivatable(navigationInstruction: NavigationInstruction, callbackName: string, next: Funcion, ignoreResult: boolean) {
+function processDeactivatable(navigationInstruction: NavigationInstruction, callbackName: string, next: Function, ignoreResult: boolean) {
   const plan = navigationInstruction.plan;
   let infos = findDeactivatable(plan, callbackName);
   let i = infos.length; //query from inside out
@@ -1849,6 +2017,8 @@ function processDeactivatable(navigationInstruction: NavigationInstruction, call
         return next.cancel(error);
       }
     }
+
+    navigationInstruction.router.couldDeactivate = true;
 
     return next();
   }
@@ -2106,7 +2276,8 @@ function determineWhatToLoad(navigationInstruction: NavigationInstruction, toLoa
         viewPortName,
         viewPortPlan.strategy,
         viewPortPlan.prevModuleId,
-        viewPortPlan.prevComponent);
+        viewPortPlan.prevComponent,
+        viewPortPlan.active);
 
       if (viewPortPlan.childNavigationInstruction) {
         viewPortInstruction.childNavigationInstruction = viewPortPlan.childNavigationInstruction;
@@ -2126,7 +2297,8 @@ function loadRoute(routeLoader: RouteLoader, navigationInstruction: NavigationIn
       viewPortPlan.name,
       viewPortPlan.strategy,
       moduleId,
-      component);
+      component,
+      viewPortPlan.active);
 
     let childRouter = component.childRouter;
     if (childRouter) {
@@ -2215,9 +2387,13 @@ export class PipelineProvider {
   /**
   * Create the navigation pipeline.
   */
-  createPipeline(): Pipeline {
+  createPipeline(useCanDeactivateStep: boolean = true): Pipeline {
     let pipeline = new Pipeline();
-    this.steps.forEach(step => pipeline.addStep(this.container.get(step)));
+    this.steps.forEach(step => {
+      if (useCanDeactivateStep || step !== CanDeactivatePreviousStep) {
+        pipeline.addStep(this.container.get(step));
+      }
+    });
     return pipeline;
   }
 
@@ -2306,9 +2482,10 @@ export class AppRouter extends Router {
   * Loads the specified URL.
   *
   * @param url The URL fragment to load.
+  * @param state A state to pass along in the navigation instruction.
   */
-  loadUrl(url): Promise<NavigationInstruction> {
-    return this._createNavigationInstruction(url)
+  loadUrl(url, state?: any): Promise<NavigationInstruction> {
+    return this._createNavigationInstruction(url, null, state)
       .then(instruction => this._queueInstruction(instruction))
       .catch(error => {
         logger.error(error);
@@ -2424,7 +2601,7 @@ export class AppRouter extends Router {
         throw new Error('Maximum navigation attempts exceeded. Giving up.');
       }
 
-      let pipeline = this.pipelineProvider.createPipeline();
+      let pipeline = this.pipelineProvider.createPipeline(!this.couldDeactivate);
 
       return pipeline
         .run(instruction)
@@ -2498,6 +2675,7 @@ function resolveInstruction(instruction, result, isInnerInstruction, router) {
     router.isNavigatingRefresh = false;
     router.isNavigatingForward = false;
     router.isNavigatingBack = false;
+    router.couldDeactivate = false;
 
     let eventName;
 
