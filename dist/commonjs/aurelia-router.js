@@ -670,6 +670,7 @@ function _buildNavigationPlan(instruction, forceLifecycleMinimum) {
   var prev = instruction.previousInstruction;
   var plan = {};
   var defaults = instruction.router.viewPortDefaults;
+  var viewPorts = {};
 
   if (prev) {
     var newParams = hasDifferentParameterValues(prev, instruction);

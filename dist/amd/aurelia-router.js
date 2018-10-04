@@ -711,6 +711,7 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
     var prev = instruction.previousInstruction;
     var plan = {};
     var defaults = instruction.router.viewPortDefaults;
+    var viewPorts = {};
 
     if (prev) {
       var newParams = hasDifferentParameterValues(prev, instruction);

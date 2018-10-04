@@ -568,6 +568,7 @@ export function _buildNavigationPlan(instruction, forceLifecycleMinimum) {
   let prev = instruction.previousInstruction;
   let plan = {};
   let defaults = instruction.router.viewPortDefaults;
+  let viewPorts = {};
 
   if (prev) {
     let newParams = hasDifferentParameterValues(prev, instruction);
