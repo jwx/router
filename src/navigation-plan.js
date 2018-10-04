@@ -57,6 +57,7 @@ export function _buildNavigationPlan(instruction: NavigationInstruction, forceLi
   let prev = instruction.previousInstruction;
   let plan = {};
   let defaults = instruction.router.viewPortDefaults;
+  let viewPorts = {};
 
   if (prev) {
     let newParams = hasDifferentParameterValues(prev, instruction);
