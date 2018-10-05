@@ -669,94 +669,61 @@ function _buildNavigationPlan(instruction, forceLifecycleMinimum) {
 
   var prev = instruction.previousInstruction;
   var plan = {};
-  var defaults = instruction.router.viewPortDefaults;
+  var pending = [];
+
+  var newParams = prev ? hasDifferentParameterValues(prev, instruction) : true;
+
+  var viewPortDefaults = Object.assign({}, instruction.router.viewPortDefaults);
+
+  if (prev && !config.explicitViewPorts) {
+    for (var viewPortName in prev.viewPortInstructions) {
+      delete viewPortDefaults[viewPortName.split('.')[0]];
+
+      var viewPortPlan = buildViewPortPlan(instruction, instruction.config.viewPorts, forceLifecycleMinimum, newParams, viewPortName, true);
+      plan[viewPortPlan.name] = viewPortPlan.plan;
+      if (viewPortPlan.task) {
+        pending.push(viewPortPlan.task);
+      }
+    }
+  }
+
   var viewPorts = {};
 
-  if (prev) {
-    var newParams = hasDifferentParameterValues(prev, instruction);
-    var _pending = [];
-
-    var _loop2 = function _loop2(viewPortName) {
-      var prevViewPortInstruction = prev.viewPortInstructions[viewPortName];
-      var nextViewPortConfig = viewPortName in config.viewPorts ? config.viewPorts[viewPortName] : prevViewPortInstruction;
-      if (nextViewPortConfig.moduleId === null && viewPortName in instruction.router.viewPortDefaults) {
-        nextViewPortConfig = defaults[viewPortName];
+  if (viewPortDefaults) {
+    for (var _viewPortName in viewPortDefaults) {
+      if (config.viewPorts[_viewPortName] === undefined) {
+        viewPorts[_viewPortName] = viewPortDefaults[_viewPortName];
       }
-
-      var viewPortPlan = plan[viewPortName] = {
-        name: viewPortName,
-        config: nextViewPortConfig,
-        prevComponent: prevViewPortInstruction.component,
-        prevModuleId: prevViewPortInstruction.moduleId
-      };
-
-      if (prevViewPortInstruction.moduleId !== nextViewPortConfig.moduleId) {
-        viewPortPlan.strategy = activationStrategy.replace;
-      } else if ('determineActivationStrategy' in prevViewPortInstruction.component.viewModel) {
-        var _prevViewPortInstruct;
-
-        viewPortPlan.strategy = (_prevViewPortInstruct = prevViewPortInstruction.component.viewModel).determineActivationStrategy.apply(_prevViewPortInstruct, instruction.lifecycleArgs);
-      } else if (config.activationStrategy) {
-        viewPortPlan.strategy = config.activationStrategy;
-      } else if (newParams || forceLifecycleMinimum) {
-        viewPortPlan.strategy = activationStrategy.invokeLifecycle;
-      } else {
-        viewPortPlan.strategy = activationStrategy.noChange;
-      }
-
-      if (viewPortPlan.strategy !== activationStrategy.replace && prevViewPortInstruction.childRouter) {
-        var path = instruction.getWildcardPath();
-        var task = prevViewPortInstruction.childRouter._createNavigationInstruction(path, instruction).then(function (childInstruction) {
-          viewPortPlan.childNavigationInstruction = childInstruction;
-
-          return _buildNavigationPlan(childInstruction, viewPortPlan.strategy === activationStrategy.invokeLifecycle).then(function (childPlan) {
-            if (childPlan instanceof Redirect) {
-              return Promise.reject(childPlan);
-            }
-            childInstruction.plan = childPlan;
-          });
-        });
-
-        _pending.push(task);
-      }
-    };
-
-    for (var viewPortName in prev.viewPortInstructions) {
-      _loop2(viewPortName);
     }
   }
 
   if (config.viewPorts) {
-    for (var viewPortName in config.viewPorts) {
-      if (config.viewPorts[viewPortName] === null || config.viewPorts[viewPortName].moduleId === null) {
-        config.viewPorts[viewPortName] = null;
+    for (var _viewPortName2 in config.viewPorts) {
+      if (config.viewPorts[_viewPortName2] === null || config.viewPorts[_viewPortName2].moduleId === null) {
+        config.viewPorts[_viewPortName2] = null;
       }
-      if (config.viewPorts[viewPortName] !== undefined || !viewPorts[viewPortName]) {
-        if (config.stateful || config.viewPorts[viewPortName] && config.viewPorts[viewPortName].stateful) {
-          config.viewPorts[viewPortName].stateful = true;
-          viewPortName = instruction.router._ensureStatefulViewPort(viewPortName, config.viewPorts[viewPortName].moduleId);
+      if (config.viewPorts[_viewPortName2] !== undefined || !viewPorts[_viewPortName2]) {
+        if (config.stateful || config.viewPorts[_viewPortName2] && config.viewPorts[_viewPortName2].stateful) {
+          config.viewPorts[_viewPortName2].stateful = true;
+          _viewPortName2 = instruction.router._ensureStatefulViewPort(_viewPortName2, config.viewPorts[_viewPortName2].moduleId);
         }
-        viewPorts[viewPortName] = config.viewPorts[viewPortName.split('.')[0]];
+        viewPorts[_viewPortName2] = config.viewPorts[_viewPortName2.split('.')[0]];
       }
     }
   }
 
-  for (var _viewPortName in config.viewPorts) {
-    var viewPortConfig = config.viewPorts[_viewPortName];
-    if (viewPortConfig.moduleId === null && _viewPortName in instruction.router.viewPortDefaults) {
-      viewPortConfig = defaults[_viewPortName];
+  for (var _viewPortName3 in viewPorts) {
+    var _viewPortPlan = buildViewPortPlan(instruction, viewPorts, forceLifecycleMinimum, newParams, _viewPortName3, false);
+    plan[_viewPortPlan.name] = _viewPortPlan.plan;
+    if (_viewPortPlan.task) {
+      pending.push(_viewPortPlan.task);
     }
-    plan[_viewPortName] = {
-      name: _viewPortName,
-      strategy: activationStrategy.replace,
-      config: viewPortConfig
-    };
   }
 
   return Promise.all(pending).then(function () {
-    for (var _viewPortName2 in plan) {
-      if (_viewPortName2.indexOf('.') != -1) {
-        var shortName = _viewPortName2.split('.')[0];
+    for (var _viewPortName4 in plan) {
+      if (_viewPortName4.indexOf('.') != -1) {
+        var shortName = _viewPortName4.split('.')[0];
         if (!plan[shortName]) {
           plan[shortName] = {
             name: shortName,
@@ -808,9 +775,9 @@ function buildViewPortPlan(instruction, viewPorts, forceLifecycleMinimum, newPar
   } else if (!nextViewPortConfig.stateful && !prevViewPortInstruction.active) {
     viewPortPlan.strategy = activationStrategy.replace;
   } else if ('determineActivationStrategy' in prevViewPortInstruction.component.viewModel) {
-    var _prevViewPortInstruct2;
+    var _prevViewPortInstruct;
 
-    viewPortPlan.strategy = (_prevViewPortInstruct2 = prevViewPortInstruction.component.viewModel).determineActivationStrategy.apply(_prevViewPortInstruct2, instruction.lifecycleArgs);
+    viewPortPlan.strategy = (_prevViewPortInstruct = prevViewPortInstruction.component.viewModel).determineActivationStrategy.apply(_prevViewPortInstruct, instruction.lifecycleArgs);
   } else if (config.activationStrategy) {
     viewPortPlan.strategy = config.activationStrategy;
   } else if (newParams || forceLifecycleMinimum) {
@@ -1464,10 +1431,10 @@ function findDeactivatable(plan, callbackName) {
   var list = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : [];
 
   for (var viewPortName in plan) {
-    var _viewPortPlan = plan[viewPortName];
-    var prevComponent = _viewPortPlan.prevComponent;
+    var viewPortPlan = plan[viewPortName];
+    var prevComponent = viewPortPlan.prevComponent;
 
-    if ((_viewPortPlan.strategy === activationStrategy.invokeLifecycle || _viewPortPlan.strategy === activationStrategy.replace) && prevComponent) {
+    if ((viewPortPlan.strategy === activationStrategy.invokeLifecycle || viewPortPlan.strategy === activationStrategy.replace) && prevComponent) {
       var viewModel = prevComponent.viewModel;
 
       if (callbackName in viewModel) {
@@ -1475,10 +1442,10 @@ function findDeactivatable(plan, callbackName) {
       }
     }
 
-    if (_viewPortPlan.strategy === activationStrategy.replace && prevComponent) {
+    if (viewPortPlan.strategy === activationStrategy.replace && prevComponent) {
       addPreviousDeactivatable(prevComponent, callbackName, list);
-    } else if (_viewPortPlan.childNavigationInstruction) {
-      findDeactivatable(_viewPortPlan.childNavigationInstruction.plan, callbackName, list);
+    } else if (viewPortPlan.childNavigationInstruction) {
+      findDeactivatable(viewPortPlan.childNavigationInstruction.plan, callbackName, list);
     }
   }
 
@@ -1523,7 +1490,7 @@ function processActivatable(navigationInstruction, callbackName, next, ignoreRes
 
     if (i < length) {
       try {
-        var _ret4 = function () {
+        var _ret3 = function () {
           var _current$viewModel;
 
           var current = infos[i];
@@ -1535,7 +1502,7 @@ function processActivatable(navigationInstruction, callbackName, next, ignoreRes
           };
         }();
 
-        if ((typeof _ret4 === 'undefined' ? 'undefined' : _typeof(_ret4)) === "object") return _ret4.v;
+        if ((typeof _ret3 === 'undefined' ? 'undefined' : _typeof(_ret3)) === "object") return _ret3.v;
       } catch (error) {
         return next.cancel(error);
       }
@@ -1626,7 +1593,7 @@ function processPotential(obj, resolve, reject) {
   }
 
   if (obj && typeof obj.subscribe === 'function') {
-    var _ret5 = function () {
+    var _ret4 = function () {
       var obs = obj;
       return {
         v: new SafeSubscription(function (sub) {
@@ -1654,7 +1621,7 @@ function processPotential(obj, resolve, reject) {
       };
     }();
 
-    if ((typeof _ret5 === 'undefined' ? 'undefined' : _typeof(_ret5)) === "object") return _ret5.v;
+    if ((typeof _ret4 === 'undefined' ? 'undefined' : _typeof(_ret4)) === "object") return _ret4.v;
   }
 
   try {
@@ -1709,20 +1676,20 @@ function determineWhatToLoad(navigationInstruction) {
   var plan = navigationInstruction.plan;
 
   for (var viewPortName in plan) {
-    var _viewPortPlan2 = plan[viewPortName];
+    var viewPortPlan = plan[viewPortName];
 
-    if (_viewPortPlan2.strategy === activationStrategy.replace) {
-      toLoad.push({ viewPortPlan: _viewPortPlan2, navigationInstruction: navigationInstruction });
+    if (viewPortPlan.strategy === activationStrategy.replace) {
+      toLoad.push({ viewPortPlan: viewPortPlan, navigationInstruction: navigationInstruction });
 
-      if (_viewPortPlan2.childNavigationInstruction) {
-        determineWhatToLoad(_viewPortPlan2.childNavigationInstruction, toLoad);
+      if (viewPortPlan.childNavigationInstruction) {
+        determineWhatToLoad(viewPortPlan.childNavigationInstruction, toLoad);
       }
     } else {
-      var _viewPortInstruction3 = navigationInstruction.addViewPortInstruction(viewPortName, _viewPortPlan2.strategy, _viewPortPlan2.prevModuleId, _viewPortPlan2.prevComponent, _viewPortPlan2.active);
+      var _viewPortInstruction3 = navigationInstruction.addViewPortInstruction(viewPortName, viewPortPlan.strategy, viewPortPlan.prevModuleId, viewPortPlan.prevComponent, viewPortPlan.active);
 
-      if (_viewPortPlan2.childNavigationInstruction) {
-        _viewPortInstruction3.childNavigationInstruction = _viewPortPlan2.childNavigationInstruction;
-        determineWhatToLoad(_viewPortPlan2.childNavigationInstruction, toLoad);
+      if (viewPortPlan.childNavigationInstruction) {
+        _viewPortInstruction3.childNavigationInstruction = viewPortPlan.childNavigationInstruction;
+        determineWhatToLoad(viewPortPlan.childNavigationInstruction, toLoad);
       }
     }
   }
@@ -1771,7 +1738,7 @@ function loadComponent(routeLoader, navigationInstruction, config) {
     component.config = config;
 
     if ('configureRouter' in viewModel) {
-      var _ret6 = function () {
+      var _ret5 = function () {
         var childRouter = childContainer.getChildRouter();
         component.childRouter = childRouter;
 
@@ -1784,7 +1751,7 @@ function loadComponent(routeLoader, navigationInstruction, config) {
         };
       }();
 
-      if ((typeof _ret6 === 'undefined' ? 'undefined' : _typeof(_ret6)) === "object") return _ret6.v;
+      if ((typeof _ret5 === 'undefined' ? 'undefined' : _typeof(_ret5)) === "object") return _ret5.v;
     }
 
     return component;
@@ -1932,11 +1899,11 @@ var AppRouter = exports.AppRouter = function (_Router) {
     _Router.prototype.registerViewPort.call(this, viewPort, name);
 
     if (!this.isActive) {
-      var _ret7 = function () {
+      var _ret6 = function () {
         var viewModel = _this12._findViewModel(viewPort);
         if ('configureRouter' in viewModel) {
           if (!_this12.isConfigured) {
-            var _ret8 = function () {
+            var _ret7 = function () {
               var resolveConfiguredPromise = _this12._resolveConfiguredPromise;
               _this12._resolveConfiguredPromise = function () {};
               return {
@@ -1951,14 +1918,14 @@ var AppRouter = exports.AppRouter = function (_Router) {
               };
             }();
 
-            if ((typeof _ret8 === 'undefined' ? 'undefined' : _typeof(_ret8)) === "object") return _ret8.v;
+            if ((typeof _ret7 === 'undefined' ? 'undefined' : _typeof(_ret7)) === "object") return _ret7.v;
           }
         } else {
           _this12.activate();
         }
       }();
 
-      if ((typeof _ret7 === 'undefined' ? 'undefined' : _typeof(_ret7)) === "object") return _ret7.v;
+      if ((typeof _ret6 === 'undefined' ? 'undefined' : _typeof(_ret6)) === "object") return _ret6.v;
     } else {
       this._dequeueInstruction();
     }
