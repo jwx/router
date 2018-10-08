@@ -55,12 +55,6 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
     if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass;
   }
 
-  var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) {
-    return typeof obj;
-  } : function (obj) {
-    return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
-  };
-
   var _createClass = function () {
     function defineProperties(target, props) {
       for (var i = 0; i < props.length; i++) {
@@ -78,6 +72,12 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
       return Constructor;
     };
   }();
+
+  var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) {
+    return typeof obj;
+  } : function (obj) {
+    return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
+  };
 
   
 
@@ -674,29 +674,35 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
     var config = instruction.config;
 
     if ('redirect' in config) {
-      var _router = instruction.router;
-      return _router._createNavigationInstruction(config.redirect).then(function (newInstruction) {
-        var params = {};
-        for (var _key2 in newInstruction.params) {
-          var val = newInstruction.params[_key2];
-          if (typeof val === 'string' && val[0] === ':') {
-            val = val.slice(1);
+      var _ret2 = function () {
+        var router = instruction.router;
+        return {
+          v: router._createNavigationInstruction(config.redirect).then(function (newInstruction) {
+            var params = {};
+            for (var _key2 in newInstruction.params) {
+              var val = newInstruction.params[_key2];
+              if (typeof val === 'string' && val[0] === ':') {
+                val = val.slice(1);
 
-            if (val in instruction.params) {
-              params[_key2] = instruction.params[val];
+                if (val in instruction.params) {
+                  params[_key2] = instruction.params[val];
+                }
+              } else {
+                params[_key2] = newInstruction.params[_key2];
+              }
             }
-          } else {
-            params[_key2] = newInstruction.params[_key2];
-          }
-        }
-        var redirectLocation = _router.generate(newInstruction.config.name, params, instruction.options);
+            var redirectLocation = router.generate(newInstruction.config.name, params, instruction.options);
 
-        if (instruction.queryString) {
-          redirectLocation += '?' + instruction.queryString;
-        }
+            if (instruction.queryString) {
+              redirectLocation += '?' + instruction.queryString;
+            }
 
-        return Promise.resolve(new Redirect(redirectLocation));
-      });
+            return Promise.resolve(new Redirect(redirectLocation));
+          })
+        };
+      }();
+
+      if ((typeof _ret2 === 'undefined' ? 'undefined' : _typeof(_ret2)) === "object") return _ret2.v;
     }
 
     var prev = instruction.previousInstruction;
@@ -859,6 +865,7 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
       this.isNavigatingRefresh = false;
       this.isNavigatingForward = false;
       this.isNavigatingBack = false;
+      this.couldDeactivate = false;
       this.navigation = [];
       this.currentInstruction = null;
       this.viewPortDefaults = {};
@@ -1139,20 +1146,20 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
 
         result = evaluateNavigationStrategy(_instruction2, this.catchAllHandler);
       } else if (this.parent) {
-        var _router2 = this._parentCatchAllHandler(this.parent);
+        var _router = this._parentCatchAllHandler(this.parent);
 
-        if (_router2) {
-          var newParentInstruction = this._findParentInstructionFromRouter(_router2, parentInstruction);
+        if (_router) {
+          var newParentInstruction = this._findParentInstructionFromRouter(_router, parentInstruction);
 
           var _instruction3 = new NavigationInstruction(Object.assign({}, instructionInit, {
             params: { path: fragment },
             queryParams: results ? results.queryParams : {},
-            router: _router2,
+            router: _router,
             parentInstruction: newParentInstruction,
             parentCatchHandler: true,
             config: null }));
 
-          result = evaluateNavigationStrategy(_instruction3, _router2.catchAllHandler);
+          result = evaluateNavigationStrategy(_instruction3, _router.catchAllHandler);
         }
       }
 
@@ -1322,6 +1329,8 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
         }
       }
 
+      navigationInstruction.router.couldDeactivate = true;
+
       return next();
     }
 
@@ -1391,13 +1400,19 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
 
       if (i < length) {
         try {
-          var _current2$viewModel;
+          var _ret4 = function () {
+            var _current$viewModel;
 
-          var _current2 = infos[i];
-          var _result2 = (_current2$viewModel = _current2.viewModel)[callbackName].apply(_current2$viewModel, _current2.lifecycleArgs);
-          return processPotential(_result2, function (val) {
-            return inspect(val, _current2.router);
-          }, next.cancel);
+            var current = infos[i];
+            var result = (_current$viewModel = current.viewModel)[callbackName].apply(_current$viewModel, current.lifecycleArgs);
+            return {
+              v: processPotential(result, function (val) {
+                return inspect(val, current.router);
+              }, next.cancel)
+            };
+          }();
+
+          if ((typeof _ret4 === 'undefined' ? 'undefined' : _typeof(_ret4)) === "object") return _ret4.v;
         } catch (error) {
           return next.cancel(error);
         }
@@ -1488,29 +1503,35 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
     }
 
     if (obj && typeof obj.subscribe === 'function') {
-      var obs = obj;
-      return new SafeSubscription(function (sub) {
-        return obs.subscribe({
-          next: function next() {
-            if (sub.subscribed) {
-              sub.unsubscribe();
-              resolve(obj);
-            }
-          },
-          error: function error(_error) {
-            if (sub.subscribed) {
-              sub.unsubscribe();
-              reject(_error);
-            }
-          },
-          complete: function complete() {
-            if (sub.subscribed) {
-              sub.unsubscribe();
-              resolve(obj);
-            }
-          }
-        });
-      });
+      var _ret5 = function () {
+        var obs = obj;
+        return {
+          v: new SafeSubscription(function (sub) {
+            return obs.subscribe({
+              next: function next() {
+                if (sub.subscribed) {
+                  sub.unsubscribe();
+                  resolve(obj);
+                }
+              },
+              error: function error(_error) {
+                if (sub.subscribed) {
+                  sub.unsubscribe();
+                  reject(_error);
+                }
+              },
+              complete: function complete() {
+                if (sub.subscribed) {
+                  sub.unsubscribe();
+                  resolve(obj);
+                }
+              }
+            });
+          })
+        };
+      }();
+
+      if ((typeof _ret5 === 'undefined' ? 'undefined' : _typeof(_ret5)) === "object") return _ret5.v;
     }
 
     try {
@@ -1627,14 +1648,20 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
       component.config = config;
 
       if ('configureRouter' in viewModel) {
-        var childRouter = childContainer.getChildRouter();
-        component.childRouter = childRouter;
+        var _ret6 = function () {
+          var childRouter = childContainer.getChildRouter();
+          component.childRouter = childRouter;
 
-        return childRouter.configure(function (c) {
-          return viewModel.configureRouter.apply(viewModel, [c, childRouter].concat(lifecycleArgs));
-        }).then(function () {
-          return component;
-        });
+          return {
+            v: childRouter.configure(function (c) {
+              return viewModel.configureRouter.apply(viewModel, [c, childRouter].concat(lifecycleArgs));
+            }).then(function () {
+              return component;
+            })
+          };
+        }();
+
+        if ((typeof _ret6 === 'undefined' ? 'undefined' : _typeof(_ret6)) === "object") return _ret6.v;
       }
 
       return component;
@@ -1678,9 +1705,13 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
     PipelineProvider.prototype.createPipeline = function createPipeline() {
       var _this9 = this;
 
+      var useCanDeactivateStep = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : true;
+
       var pipeline = new Pipeline();
       this.steps.forEach(function (step) {
-        return pipeline.addStep(_this9.container.get(step));
+        if (useCanDeactivateStep || step !== CanDeactivatePreviousStep) {
+          pipeline.addStep(_this9.container.get(step));
+        }
       });
       return pipeline;
     };
@@ -1778,21 +1809,33 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
       _Router.prototype.registerViewPort.call(this, viewPort, name);
 
       if (!this.isActive) {
-        var viewModel = this._findViewModel(viewPort);
-        if ('configureRouter' in viewModel) {
-          if (!this.isConfigured) {
-            var resolveConfiguredPromise = this._resolveConfiguredPromise;
-            this._resolveConfiguredPromise = function () {};
-            return this.configure(function (config) {
-              return viewModel.configureRouter(config, _this12);
-            }).then(function () {
-              _this12.activate();
-              resolveConfiguredPromise();
-            });
+        var _ret7 = function () {
+          var viewModel = _this12._findViewModel(viewPort);
+          if ('configureRouter' in viewModel) {
+            if (!_this12.isConfigured) {
+              var _ret8 = function () {
+                var resolveConfiguredPromise = _this12._resolveConfiguredPromise;
+                _this12._resolveConfiguredPromise = function () {};
+                return {
+                  v: {
+                    v: _this12.configure(function (config) {
+                      return viewModel.configureRouter(config, _this12);
+                    }).then(function () {
+                      _this12.activate();
+                      resolveConfiguredPromise();
+                    })
+                  }
+                };
+              }();
+
+              if ((typeof _ret8 === 'undefined' ? 'undefined' : _typeof(_ret8)) === "object") return _ret8.v;
+            }
+          } else {
+            _this12.activate();
           }
-        } else {
-          this.activate();
-        }
+        }();
+
+        if ((typeof _ret7 === 'undefined' ? 'undefined' : _typeof(_ret7)) === "object") return _ret7.v;
       } else {
         this._dequeueInstruction();
       }
@@ -1857,11 +1900,19 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
           _this14.isNavigatingForward = true;
         } else if (_this14.currentNavigationTracker > navtracker) {
           _this14.isNavigatingBack = true;
-        }if (!navtracker) {
+        }
+        if (!navtracker) {
           navtracker = Date.now();
           _this14.history.setState('NavigationTracker', navtracker);
         }
         _this14.currentNavigationTracker = navtracker;
+
+        var historyIndex = _this14.history.getHistoryIndex();
+        _this14.lastHistoryMovement = historyIndex - _this14.currentHistoryIndex;
+        if (isNaN(_this14.lastHistoryMovement)) {
+          _this14.lastHistoryMovement = 0;
+        }
+        _this14.currentHistoryIndex = historyIndex;
 
         instruction.previousInstruction = _this14.currentInstruction;
 
@@ -1875,7 +1926,7 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
           throw new Error('Maximum navigation attempts exceeded. Giving up.');
         }
 
-        var pipeline = _this14.pipelineProvider.createPipeline();
+        var pipeline = _this14.pipelineProvider.createPipeline(!_this14.couldDeactivate);
 
         return pipeline.run(instruction).then(function (result) {
           return processResult(instruction, result, instructionCount, _this14);
@@ -1953,6 +2004,7 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
       router.isNavigatingRefresh = false;
       router.isNavigatingForward = false;
       router.isNavigatingBack = false;
+      router.couldDeactivate = false;
 
       var eventName = void 0;
 
@@ -1978,7 +2030,11 @@ define(['exports', 'aurelia-logging', 'aurelia-route-recognizer', 'aurelia-depen
   function restorePreviousLocation(router) {
     var previousLocation = router.history.previousLocation;
     if (previousLocation) {
-      router.navigate(router.history.previousLocation, { trigger: false, replace: true });
+      Promise.resolve().then(function () {
+        if (router.lastHistoryMovement && !isNaN(router.lastHistoryMovement)) {
+          router.history.history.go(-router.lastHistoryMovement);
+        }
+      });
     } else if (router.fallbackRoute) {
       router.navigate(router.fallbackRoute, { trigger: true, replace: true });
     } else {

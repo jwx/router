@@ -626,11 +626,6 @@ interface PipelineResult {
 }
 
 /**
-* The result of a router navigation.
-*/
-export type NavigationResult = Promise<PipelineResult | boolean>;
-
-/**
 * When a navigation command is encountered, the current navigation
 * will be cancelled and control will be passed to the navigation
 * command so it can determine the correct action.
@@ -1274,9 +1269,24 @@ export class Router {
   isNavigatingRefresh: boolean;
 
   /**
+  * True if the previous instruction successfully completed the CanDeactivatePreviousStep in the current navigation.
+  */
+  couldDeactivate: boolean;
+
+  /**
   * The currently active navigation tracker.
   */
   currentNavigationTracker: number;
+
+  /**
+  * The current index in the browser history.
+  */
+  currentHistoryIndex: number;
+
+  /**
+  * The amount of index steps in the last history navigation
+  */
+  lastHistoryMovement: number;
 
   /**
   * The navigation models for routes that specified [[RouteConfig.nav]].
@@ -1339,6 +1349,7 @@ export class Router {
     this.isNavigatingRefresh = false;
     this.isNavigatingForward = false;
     this.isNavigatingBack = false;
+    this.couldDeactivate = false;
     this.navigation = [];
     this.currentInstruction = null;
     this.viewPortDefaults = {};
@@ -1407,7 +1418,7 @@ export class Router {
   * @param fragment The URL fragment to use as the navigation destination.
   * @param options The navigation options.
   */
-  navigate(fragment: string, options?: NavigationOptions): NavigationResult {
+  navigate(fragment: string, options?: NavigationOptions): Promise<PipelineResult | boolean> {
     if (!this.isConfigured && this.parent) {
       return this.parent.navigate(fragment, options);
     }
@@ -1424,7 +1435,7 @@ export class Router {
   * @param params The route parameters to be used when populating the route pattern.
   * @param options The navigation options.
   */
-  navigateToRoute(route: string, params?: any, options?: NavigationOptions): NavigationResult {
+  navigateToRoute(route: string, params?: any, options?: NavigationOptions): Promise<PipelineResult | boolean> {
     let path = this.generate(route, params);
     return this.navigate(path, options);
   }
@@ -1826,7 +1837,7 @@ export class ActivateNextStep {
   }
 }
 
-function processDeactivatable(navigationInstruction: NavigationInstruction, callbackName: string, next: Funcion, ignoreResult: boolean) {
+function processDeactivatable(navigationInstruction: NavigationInstruction, callbackName: string, next: Function, ignoreResult: boolean) {
   const plan = navigationInstruction.plan;
   let infos = findDeactivatable(plan, callbackName);
   let i = infos.length; //query from inside out
@@ -1849,6 +1860,8 @@ function processDeactivatable(navigationInstruction: NavigationInstruction, call
         return next.cancel(error);
       }
     }
+
+    navigationInstruction.router.couldDeactivate = true;
 
     return next();
   }
@@ -2215,9 +2228,13 @@ export class PipelineProvider {
   /**
   * Create the navigation pipeline.
   */
-  createPipeline(): Pipeline {
+  createPipeline(useCanDeactivateStep: boolean = true): Pipeline {
     let pipeline = new Pipeline();
-    this.steps.forEach(step => pipeline.addStep(this.container.get(step)));
+    this.steps.forEach(step => {
+      if (useCanDeactivateStep || step !== CanDeactivatePreviousStep) {
+        pipeline.addStep(this.container.get(step));
+      }
+    });
     return pipeline;
   }
 
@@ -2406,11 +2423,19 @@ export class AppRouter extends Router {
         this.isNavigatingForward = true;
       } else if (this.currentNavigationTracker > navtracker) {
         this.isNavigatingBack = true;
-      } if (!navtracker) {
+      }
+      if (!navtracker) {
         navtracker = Date.now();
         this.history.setState('NavigationTracker', navtracker);
       }
       this.currentNavigationTracker = navtracker;
+
+      let historyIndex = this.history.getHistoryIndex();
+      this.lastHistoryMovement = historyIndex - this.currentHistoryIndex;
+      if (isNaN(this.lastHistoryMovement)) {
+        this.lastHistoryMovement = 0;
+      }
+      this.currentHistoryIndex = historyIndex;
 
       instruction.previousInstruction = this.currentInstruction;
 
@@ -2424,7 +2449,7 @@ export class AppRouter extends Router {
         throw new Error('Maximum navigation attempts exceeded. Giving up.');
       }
 
-      let pipeline = this.pipelineProvider.createPipeline();
+      let pipeline = this.pipelineProvider.createPipeline(!this.couldDeactivate);
 
       return pipeline
         .run(instruction)
@@ -2498,6 +2523,7 @@ function resolveInstruction(instruction, result, isInnerInstruction, router) {
     router.isNavigatingRefresh = false;
     router.isNavigatingForward = false;
     router.isNavigatingBack = false;
+    router.couldDeactivate = false;
 
     let eventName;
 
@@ -2523,7 +2549,11 @@ function resolveInstruction(instruction, result, isInnerInstruction, router) {
 function restorePreviousLocation(router) {
   let previousLocation = router.history.previousLocation;
   if (previousLocation) {
-    router.navigate(router.history.previousLocation, { trigger: false, replace: true });
+    Promise.resolve().then(() => {
+      if (router.lastHistoryMovement && !isNaN(router.lastHistoryMovement)) {
+        router.history.history.go(-router.lastHistoryMovement);
+      }
+    });
   } else if (router.fallbackRoute) {
     router.navigate(router.fallbackRoute, { trigger: true, replace: true });
   } else {

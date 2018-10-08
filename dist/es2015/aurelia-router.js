@@ -195,7 +195,7 @@ export let NavigationInstruction = class NavigationInstruction {
       let viewPort = router.viewPorts[viewPortName];
 
       if (!viewPort) {
-        throw new Error(`There was no router-view found in the view for ${viewPortInstruction.moduleId}.`);
+        throw new Error(`There was no router-view found in the view for ${ viewPortInstruction.moduleId }.`);
       }
 
       if (viewPortInstruction.strategy === activationStrategy.replace) {
@@ -706,6 +706,7 @@ export let Router = class Router {
     this.isNavigatingRefresh = false;
     this.isNavigatingForward = false;
     this.isNavigatingBack = false;
+    this.couldDeactivate = false;
     this.navigation = [];
     this.currentInstruction = null;
     this.viewPortDefaults = {};
@@ -783,12 +784,12 @@ export let Router = class Router {
     }
 
     if (!hasRoute) {
-      throw new Error(`A route with name '${name}' could not be found. Check that \`name: '${name}'\` was specified in the route's config.`);
+      throw new Error(`A route with name '${ name }' could not be found. Check that \`name: '${ name }'\` was specified in the route's config.`);
     }
 
     let path = this._recognizer.generate(name, params);
     let rootedPath = _createRootedPath(path, this.baseUrl, this.history._hasPushState, options.absolute);
-    return options.absolute ? `${this.history.getAbsoluteRoot()}${rootedPath}` : rootedPath;
+    return options.absolute ? `${ this.history.getAbsoluteRoot() }${ rootedPath }` : rootedPath;
   }
 
   createNavModel(config) {
@@ -838,7 +839,7 @@ export let Router = class Router {
       delete config.settings;
       let withChild = JSON.parse(JSON.stringify(config));
       config.settings = settings;
-      withChild.route = `${path}/*childRoute`;
+      withChild.route = `${ path }/*childRoute`;
       withChild.hasChildRouter = true;
       this._childRecognizer.add({
         path: withChild.route,
@@ -1000,7 +1001,7 @@ export let Router = class Router {
       this.baseUrl = generateBaseUrl(this.parent, parentInstruction);
     }
 
-    return result || Promise.reject(new Error(`Route not found: ${url}`));
+    return result || Promise.reject(new Error(`Route not found: ${ url }`));
   }
 
   _findParentInstructionFromRouter(router, instruction) {
@@ -1045,7 +1046,7 @@ export let Router = class Router {
 };
 
 function generateBaseUrl(router, instruction) {
-  return `${router.baseUrl || ''}${instruction.getBaseUrl() || ''}`;
+  return `${ router.baseUrl || '' }${ instruction.getBaseUrl() || '' }`;
 }
 
 function validateRouteConfig(config, routes) {
@@ -1124,6 +1125,8 @@ function processDeactivatable(navigationInstruction, callbackName, next, ignoreR
         return next.cancel(error);
       }
     }
+
+    navigationInstruction.router.couldDeactivate = true;
 
     return next();
   }
@@ -1432,9 +1435,13 @@ export let PipelineProvider = class PipelineProvider {
     this.steps = [BuildNavigationPlanStep, CanDeactivatePreviousStep, LoadRouteStep, this._createPipelineSlot('authorize'), CanActivateNextStep, this._createPipelineSlot('preActivate', 'modelbind'), DeactivatePreviousStep, ActivateNextStep, this._createPipelineSlot('preRender', 'precommit'), CommitChangesStep, this._createPipelineSlot('postRender', 'postcomplete')];
   }
 
-  createPipeline() {
+  createPipeline(useCanDeactivateStep = true) {
     let pipeline = new Pipeline();
-    this.steps.forEach(step => pipeline.addStep(this.container.get(step)));
+    this.steps.forEach(step => {
+      if (useCanDeactivateStep || step !== CanDeactivatePreviousStep) {
+        pipeline.addStep(this.container.get(step));
+      }
+    });
     return pipeline;
   }
 
@@ -1449,7 +1456,7 @@ export let PipelineProvider = class PipelineProvider {
         found.steps.push(step);
       }
     } else {
-      throw new Error(`Invalid pipeline slot name: ${name}.`);
+      throw new Error(`Invalid pipeline slot name: ${ name }.`);
     }
   }
 
@@ -1584,25 +1591,33 @@ export let AppRouter = class AppRouter extends Router {
         this.isNavigatingForward = true;
       } else if (this.currentNavigationTracker > navtracker) {
         this.isNavigatingBack = true;
-      }if (!navtracker) {
+      }
+      if (!navtracker) {
         navtracker = Date.now();
         this.history.setState('NavigationTracker', navtracker);
       }
       this.currentNavigationTracker = navtracker;
+
+      let historyIndex = this.history.getHistoryIndex();
+      this.lastHistoryMovement = historyIndex - this.currentHistoryIndex;
+      if (isNaN(this.lastHistoryMovement)) {
+        this.lastHistoryMovement = 0;
+      }
+      this.currentHistoryIndex = historyIndex;
 
       instruction.previousInstruction = this.currentInstruction;
 
       if (!instructionCount) {
         this.events.publish('router:navigation:processing', { instruction });
       } else if (instructionCount === this.maxInstructionCount - 1) {
-        logger.error(`${instructionCount + 1} navigation instructions have been attempted without success. Restoring last known good location.`);
+        logger.error(`${ instructionCount + 1 } navigation instructions have been attempted without success. Restoring last known good location.`);
         restorePreviousLocation(this);
         return this._dequeueInstruction(instructionCount + 1);
       } else if (instructionCount > this.maxInstructionCount) {
         throw new Error('Maximum navigation attempts exceeded. Giving up.');
       }
 
-      let pipeline = this.pipelineProvider.createPipeline();
+      let pipeline = this.pipelineProvider.createPipeline(!this.couldDeactivate);
 
       return pipeline.run(instruction).then(result => processResult(instruction, result, instructionCount, this)).catch(error => {
         return { output: error instanceof Error ? error : new Error(error) };
@@ -1635,7 +1650,7 @@ export let AppRouter = class AppRouter extends Router {
 function processResult(instruction, result, instructionCount, router) {
   if (!(result && 'completed' in result && 'output' in result)) {
     result = result || {};
-    result.output = new Error(`Expected router pipeline to return a navigation result, but got [${JSON.stringify(result)}] instead.`);
+    result.output = new Error(`Expected router pipeline to return a navigation result, but got [${ JSON.stringify(result) }] instead.`);
   }
 
   let finalResult = null;
@@ -1670,6 +1685,7 @@ function resolveInstruction(instruction, result, isInnerInstruction, router) {
     router.isNavigatingRefresh = false;
     router.isNavigatingForward = false;
     router.isNavigatingBack = false;
+    router.couldDeactivate = false;
 
     let eventName;
 
@@ -1683,7 +1699,7 @@ function resolveInstruction(instruction, result, isInnerInstruction, router) {
       eventName = 'success';
     }
 
-    router.events.publish(`router:navigation:${eventName}`, eventArgs);
+    router.events.publish(`router:navigation:${ eventName }`, eventArgs);
     router.events.publish('router:navigation:complete', eventArgs);
   } else {
     router.events.publish('router:navigation:child:complete', eventArgs);
@@ -1695,7 +1711,11 @@ function resolveInstruction(instruction, result, isInnerInstruction, router) {
 function restorePreviousLocation(router) {
   let previousLocation = router.history.previousLocation;
   if (previousLocation) {
-    router.navigate(router.history.previousLocation, { trigger: false, replace: true });
+    Promise.resolve().then(() => {
+      if (router.lastHistoryMovement && !isNaN(router.lastHistoryMovement)) {
+        router.history.history.go(-router.lastHistoryMovement);
+      }
+    });
   } else if (router.fallbackRoute) {
     router.navigate(router.fallbackRoute, { trigger: true, replace: true });
   } else {
